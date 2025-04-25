@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PDF to PPT Converter</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f4f4f9;
+            text-align: center;
+            padding: 20px;
+        }
+        .container {
+            margin: auto;
+            max-width: 600px;
+            background: #fff;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+        }
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        button:disabled {
+            background: #ccc;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>PDF to PPT Converter</h1>
+        <form id="upload-form">
+            <input type="file" id="pdf-file" accept=".pdf" required />
+            <br><br>
+            <button type="submit" id="convert-btn">Convert</button>
+        </form>
+        <div id="status"></div>
+        <a id="download-link" style="display: none;" target="_blank">Download PPT</a>
+    </div>
+
+    <script>
+        const form = document.getElementById('upload-form');
+        const statusDiv = document.getElementById('status');
+        const downloadLink = document.getElementById('download-link');
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const fileInput = document.getElementById('pdf-file');
+            const file = fileInput.files[0];
+            if (!file) {
+                alert('Please select a PDF file.');
+                return;
+            }
+
+            statusDiv.textContent = 'Uploading and converting...';
+            const formData = new FormData();
+            formData.append('file', file);
+
+            const response = await fetch('/convert', {
+                method: 'POST',
+                body: formData
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                statusDiv.textContent = 'Conversion completed!';
+                downloadLink.href = data.download_url;
+                downloadLink.style.display = 'inline';
+                downloadLink.textContent = 'Download PPT';
+            } else {
+                statusDiv.textContent = 'Conversion failed. Please try again.';
+            }
+        });
+    </script>
+</body>
+</html>
