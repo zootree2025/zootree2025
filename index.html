@@ -1,88 +1,465 @@
 <!DOCTYPE html>
-<html lang="zh-TW">
+<html lang="zh-CN">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PDF/Word to PPT Converter</title>
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            background-color: #ADD8E6;
-            margin: 0;
-            padding: 0;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            height: 100vh;
-            flex-direction: column;
-        }
-        .container {
-            background: white;
-            padding: 20px;
-            border-radius: 8px;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-            width: 400px;
-            text-align: center;
-        }
-        input, select, button {
-            margin: 10px 0;
-            padding: 10px;
-            width: 100%;
-            border: 1px solid #ccc;
-            border-radius: 4px;
-        }
-        button {
-            background-color: #4CAF50;
-            color: white;
-            font-size: 16px;
-        }
-        button:disabled {
-            background-color: #ccc;
-        }
-    </style>
+  <meta charset="UTF-8" />
+  <title>PDF转JPG并打包ZIP（高效＋進度條）</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.6.347/pdf.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.7.1/jszip.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+  <style>
+    #progressContainer {
+      margin-top: 15px;
+      width: 100%;
+      max-width: 400px;
+    }
+    progress {
+      width: 100%;
+      height: 20px;
+    }
+    #status {
+      margin-top: 5px;
+      font-weight: bold;
+    }
+  </style>
 </head>
 <body>
-    <div class="container">
-        <h1>PDF/Word 轉 PPT</h1>
-        <form id="converter-form">
-            <input type="file" id="file-input" accept=".pdf,.docx" required>
-            <select id="aspect-ratio">
-                <option value="16:9">16:9</option>
-                <option value="4:3">4:3</option>
-                <option value="10:16">10:16</option>
-            </select>
-            <input type="color" id="font-color" value="#000000" title="字體顏色">
-            <input type="color" id="bg-color" value="#FFFFFF" title="背景顏色">
-            <button type="submit">開始轉檔</button>
-        </form>
-        <p id="status"></p>
-    </div>
-    <script>
-        document.getElementById('converter-form').addEventListener('submit', async (e) => {
-            e.preventDefault();
-            const status = document.getElementById('status');
-            status.textContent = "正在上傳並轉換...";
-            const formData = new FormData();
-            formData.append('file', document.getElementById('file-input').files[0]);
-            formData.append('aspect_ratio', document.getElementById('aspect-ratio').value);
-            formData.append('font_color', document.getElementById('font-color').value);
-            formData.append('bg_color', document.getElementById('bg-color').value);
+  <h1>PDF转JPG（高效ZIP + 進度條）</h1>
+  <input type="file" id="pdfInput" accept="application/pdf" />
+  <br><br>
+  <label for="zipName">ZIP檔案名稱：</label>
+  <input type="text" id="zipName" placeholder="輸入ZIP檔名（可省略）" />
 
-            try {
-                const response = await fetch('https://your-backend-api-url/convert', {
-                    method: 'POST',
-                    body: formData,
-                });
-                const result = await response.json();
-                if (response.ok) {
-                    status.innerHTML = `轉換完成！<a href="${result.download_url}" target="_blank">下載 PPT</a>`;
-                } else {
-                    status.textContent = `錯誤: ${result.error}`;
-                }
-            } catch (err) {
-                status.textContent = "伺服器連線失敗，請稍後再試。";
-            }
-        });
-    </script>
+  <div id="progressContainer" style="display: none;">
+    <progress id="progressBar" value="0" max="100"></progress>
+    <div id="status">處理中...</div>
+  </div>
+
+  <script>
+    document.getElementById('pdfInput').addEventListener('change', async function () {
+      const file = this.files[0];
+      const zipName = (document.getElementById('zipName').value || 'converted_images') + '.zip';
+      if (!file || file.type !== 'application/pdf') return;
+
+      const reader = new FileReader();
+      reader.onload = async function (e) {
+        const pdfData = new Uint8Array(e.target.result);
+        const loadingTask = pdfjsLib.getDocument({ data: pdfData });
+        const pdf = await loadingTask.promise;
+        const zip = new JSZip();
+        const numPages = pdf.numPages;
+
+        // 顯示進度條
+        const progressContainer = document.getElementById('progressContainer');
+        const progressBar = document.getElementById('progressBar');
+        const status = document.getElementById('status');
+        progressContainer.style.display = 'block';
+        progressBar.max = numPages;
+        progressBar.value = 0;
+        status.textContent = `正在處理第 0 / ${numPages} 頁...`;
+
+        // 分頁處理，逐步更新進度
+        for (let i = 1; i <= numPages; i++) {
+          const blob = await convertPageToJPG(pdf, i);
+          zip.file(`page_${i}.jpg`, blob);
+          progressBar.value = i;
+          status.textContent = `正在處理第 ${i} / ${numPages} 頁...`;
+        }
+
+        status.textContent = "打包中...";
+        const zipBlob = await zip.generateAsync({ type: 'blob' });
+
+        saveAs(zipBlob, zipName);
+        status.textContent = "✅ 下載完成！";
+      };
+      reader.readAsArrayBuffer(file);
+    });
+
+    async function convertPageToJPG(pdf, pageNumber) {
+      const page = await pdf.getPage(pageNumber);
+      const scale = 2.0;
+      const viewport = page.getViewport({ scale });
+
+      const canvas = document.createElement('canvas');
+      canvas.width = viewport.width;
+      canvas.height = viewport.height;
+      const context = canvas.getContext('2d');
+
+      await page.render({ canvasContext: context, viewport }).promise;
+
+      return new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 1.0));
+    }
+  </script>
+</body>
+</html>
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>PDF转JPG并打包ZIP（高效＋進度條）</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.6.347/pdf.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.7.1/jszip.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+  <style>
+    #progressContainer {
+      margin-top: 15px;
+      width: 100%;
+      max-width: 400px;
+    }
+    progress {
+      width: 100%;
+      height: 20px;
+    }
+    #status {
+      margin-top: 5px;
+      font-weight: bold;
+    }
+  </style>
+</head>
+<body>
+  <h1>PDF转JPG（高效ZIP + 進度條）</h1>
+  <input type="file" id="pdfInput" accept="application/pdf" />
+  <br><br>
+  <label for="zipName">ZIP檔案名稱：</label>
+  <input type="text" id="zipName" placeholder="輸入ZIP檔名（可省略）" />
+
+  <div id="progressContainer" style="display: none;">
+    <progress id="progressBar" value="0" max="100"></progress>
+    <div id="status">處理中...</div>
+  </div>
+
+  <script>
+    document.getElementById('pdfInput').addEventListener('change', async function () {
+      const file = this.files[0];
+      const zipName = (document.getElementById('zipName').value || 'converted_images') + '.zip';
+      if (!file || file.type !== 'application/pdf') return;
+
+      const reader = new FileReader();
+      reader.onload = async function (e) {
+        const pdfData = new Uint8Array(e.target.result);
+        const loadingTask = pdfjsLib.getDocument({ data: pdfData });
+        const pdf = await loadingTask.promise;
+        const zip = new JSZip();
+        const numPages = pdf.numPages;
+
+        // 顯示進度條
+        const progressContainer = document.getElementById('progressContainer');
+        const progressBar = document.getElementById('progressBar');
+        const status = document.getElementById('status');
+        progressContainer.style.display = 'block';
+        progressBar.max = numPages;
+        progressBar.value = 0;
+        status.textContent = `正在處理第 0 / ${numPages} 頁...`;
+
+        // 分頁處理，逐步更新進度
+        for (let i = 1; i <= numPages; i++) {
+          const blob = await convertPageToJPG(pdf, i);
+          zip.file(`page_${i}.jpg`, blob);
+          progressBar.value = i;
+          status.textContent = `正在處理第 ${i} / ${numPages} 頁...`;
+        }
+
+        status.textContent = "打包中...";
+        const zipBlob = await zip.generateAsync({ type: 'blob' });
+
+        saveAs(zipBlob, zipName);
+        status.textContent = "✅ 下載完成！";
+      };
+      reader.readAsArrayBuffer(file);
+    });
+
+    async function convertPageToJPG(pdf, pageNumber) {
+      const page = await pdf.getPage(pageNumber);
+      const scale = 2.0;
+      const viewport = page.getViewport({ scale });
+
+      const canvas = document.createElement('canvas');
+      canvas.width = viewport.width;
+      canvas.height = viewport.height;
+      const context = canvas.getContext('2d');
+
+      await page.render({ canvasContext: context, viewport }).promise;
+
+      return new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 1.0));
+    }
+  </script>
+</body>
+</html>
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>PDF转JPG并打包ZIP（高效＋進度條）</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.6.347/pdf.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.7.1/jszip.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+  <style>
+    #progressContainer {
+      margin-top: 15px;
+      width: 100%;
+      max-width: 400px;
+    }
+    progress {
+      width: 100%;
+      height: 20px;
+    }
+    #status {
+      margin-top: 5px;
+      font-weight: bold;
+    }
+  </style>
+</head>
+<body>
+  <h1>PDF转JPG（高效ZIP + 進度條）</h1>
+  <input type="file" id="pdfInput" accept="application/pdf" />
+  <br><br>
+  <label for="zipName">ZIP檔案名稱：</label>
+  <input type="text" id="zipName" placeholder="輸入ZIP檔名（可省略）" />
+
+  <div id="progressContainer" style="display: none;">
+    <progress id="progressBar" value="0" max="100"></progress>
+    <div id="status">處理中...</div>
+  </div>
+
+  <script>
+    document.getElementById('pdfInput').addEventListener('change', async function () {
+      const file = this.files[0];
+      const zipName = (document.getElementById('zipName').value || 'converted_images') + '.zip';
+      if (!file || file.type !== 'application/pdf') return;
+
+      const reader = new FileReader();
+      reader.onload = async function (e) {
+        const pdfData = new Uint8Array(e.target.result);
+        const loadingTask = pdfjsLib.getDocument({ data: pdfData });
+        const pdf = await loadingTask.promise;
+        const zip = new JSZip();
+        const numPages = pdf.numPages;
+
+        // 顯示進度條
+        const progressContainer = document.getElementById('progressContainer');
+        const progressBar = document.getElementById('progressBar');
+        const status = document.getElementById('status');
+        progressContainer.style.display = 'block';
+        progressBar.max = numPages;
+        progressBar.value = 0;
+        status.textContent = `正在處理第 0 / ${numPages} 頁...`;
+
+        // 分頁處理，逐步更新進度
+        for (let i = 1; i <= numPages; i++) {
+          const blob = await convertPageToJPG(pdf, i);
+          zip.file(`page_${i}.jpg`, blob);
+          progressBar.value = i;
+          status.textContent = `正在處理第 ${i} / ${numPages} 頁...`;
+        }
+
+        status.textContent = "打包中...";
+        const zipBlob = await zip.generateAsync({ type: 'blob' });
+
+        saveAs(zipBlob, zipName);
+        status.textContent = "✅ 下載完成！";
+      };
+      reader.readAsArrayBuffer(file);
+    });
+
+    async function convertPageToJPG(pdf, pageNumber) {
+      const page = await pdf.getPage(pageNumber);
+      const scale = 2.0;
+      const viewport = page.getViewport({ scale });
+
+      const canvas = document.createElement('canvas');
+      canvas.width = viewport.width;
+      canvas.height = viewport.height;
+      const context = canvas.getContext('2d');
+
+      await page.render({ canvasContext: context, viewport }).promise;
+
+      return new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 1.0));
+    }
+  </script>
+</body>
+</html>
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>PDF转JPG并打包ZIP（高效＋進度條）</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.6.347/pdf.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.7.1/jszip.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+  <style>
+    #progressContainer {
+      margin-top: 15px;
+      width: 100%;
+      max-width: 400px;
+    }
+    progress {
+      width: 100%;
+      height: 20px;
+    }
+    #status {
+      margin-top: 5px;
+      font-weight: bold;
+    }
+  </style>
+</head>
+<body>
+  <h1>PDF转JPG（高效ZIP + 進度條）</h1>
+  <input type="file" id="pdfInput" accept="application/pdf" />
+  <br><br>
+  <label for="zipName">ZIP檔案名稱：</label>
+  <input type="text" id="zipName" placeholder="輸入ZIP檔名（可省略）" />
+
+  <div id="progressContainer" style="display: none;">
+    <progress id="progressBar" value="0" max="100"></progress>
+    <div id="status">處理中...</div>
+  </div>
+
+  <script>
+    document.getElementById('pdfInput').addEventListener('change', async function () {
+      const file = this.files[0];
+      const zipName = (document.getElementById('zipName').value || 'converted_images') + '.zip';
+      if (!file || file.type !== 'application/pdf') return;
+
+      const reader = new FileReader();
+      reader.onload = async function (e) {
+        const pdfData = new Uint8Array(e.target.result);
+        const loadingTask = pdfjsLib.getDocument({ data: pdfData });
+        const pdf = await loadingTask.promise;
+        const zip = new JSZip();
+        const numPages = pdf.numPages;
+
+        // 顯示進度條
+        const progressContainer = document.getElementById('progressContainer');
+        const progressBar = document.getElementById('progressBar');
+        const status = document.getElementById('status');
+        progressContainer.style.display = 'block';
+        progressBar.max = numPages;
+        progressBar.value = 0;
+        status.textContent = `正在處理第 0 / ${numPages} 頁...`;
+
+        // 分頁處理，逐步更新進度
+        for (let i = 1; i <= numPages; i++) {
+          const blob = await convertPageToJPG(pdf, i);
+          zip.file(`page_${i}.jpg`, blob);
+          progressBar.value = i;
+          status.textContent = `正在處理第 ${i} / ${numPages} 頁...`;
+        }
+
+        status.textContent = "打包中...";
+        const zipBlob = await zip.generateAsync({ type: 'blob' });
+
+        saveAs(zipBlob, zipName);
+        status.textContent = "✅ 下載完成！";
+      };
+      reader.readAsArrayBuffer(file);
+    });
+
+    async function convertPageToJPG(pdf, pageNumber) {
+      const page = await pdf.getPage(pageNumber);
+      const scale = 2.0;
+      const viewport = page.getViewport({ scale });
+
+      const canvas = document.createElement('canvas');
+      canvas.width = viewport.width;
+      canvas.height = viewport.height;
+      const context = canvas.getContext('2d');
+
+      await page.render({ canvasContext: context, viewport }).promise;
+
+      return new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 1.0));
+    }
+  </script>
+</body>
+</html>
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>PDF转JPG并打包ZIP（高效＋進度條）</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.6.347/pdf.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.7.1/jszip.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+  <style>
+    #progressContainer {
+      margin-top: 15px;
+      width: 100%;
+      max-width: 400px;
+    }
+    progress {
+      width: 100%;
+      height: 20px;
+    }
+    #status {
+      margin-top: 5px;
+      font-weight: bold;
+    }
+  </style>
+</head>
+<body>
+  <h1>PDF转JPG（高效ZIP + 進度條）</h1>
+  <input type="file" id="pdfInput" accept="application/pdf" />
+  <br><br>
+  <label for="zipName">ZIP檔案名稱：</label>
+  <input type="text" id="zipName" placeholder="輸入ZIP檔名（可省略）" />
+
+  <div id="progressContainer" style="display: none;">
+    <progress id="progressBar" value="0" max="100"></progress>
+    <div id="status">處理中...</div>
+  </div>
+
+  <script>
+    document.getElementById('pdfInput').addEventListener('change', async function () {
+      const file = this.files[0];
+      const zipName = (document.getElementById('zipName').value || 'converted_images') + '.zip';
+      if (!file || file.type !== 'application/pdf') return;
+
+      const reader = new FileReader();
+      reader.onload = async function (e) {
+        const pdfData = new Uint8Array(e.target.result);
+        const loadingTask = pdfjsLib.getDocument({ data: pdfData });
+        const pdf = await loadingTask.promise;
+        const zip = new JSZip();
+        const numPages = pdf.numPages;
+
+        // 顯示進度條
+        const progressContainer = document.getElementById('progressContainer');
+        const progressBar = document.getElementById('progressBar');
+        const status = document.getElementById('status');
+        progressContainer.style.display = 'block';
+        progressBar.max = numPages;
+        progressBar.value = 0;
+        status.textContent = `正在處理第 0 / ${numPages} 頁...`;
+
+        // 分頁處理，逐步更新進度
+        for (let i = 1; i <= numPages; i++) {
+          const blob = await convertPageToJPG(pdf, i);
+          zip.file(`page_${i}.jpg`, blob);
+          progressBar.value = i;
+          status.textContent = `正在處理第 ${i} / ${numPages} 頁...`;
+        }
+
+        status.textContent = "打包中...";
+        const zipBlob = await zip.generateAsync({ type: 'blob' });
+
+        saveAs(zipBlob, zipName);
+        status.textContent = "✅ 下載完成！";
+      };
+      reader.readAsArrayBuffer(file);
+    });
+
+    async function convertPageToJPG(pdf, pageNumber) {
+      const page = await pdf.getPage(pageNumber);
+      const scale = 2.0;
+      const viewport = page.getViewport({ scale });
+
+      const canvas = document.createElement('canvas');
+      canvas.width = viewport.width;
+      canvas.height = viewport.height;
+      const context = canvas.getContext('2d');
+
+      await page.render({ canvasContext: context, viewport }).promise;
+
+      return new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 1.0));
+    }
+  </script>
 </body>
 </html>
